@@ -1,0 +1,10 @@
+{
+  "name": "kanban-md-editor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node tests/parser.test.js",
+    "serve": "node server.mjs"
+  }
+}

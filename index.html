@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Kanban Markdown Editor</title>
+    <link rel="stylesheet" href="./src/styles.css">
+  </head>
+  <body>
+    <header class="app-header">
+      <div>
+        <h1>Kanban Markdown Editor</h1>
+        <p>Editable Kanban view for agent-readable TODO.md files.</p>
+      </div>
+      <div class="header-actions">
+        <button id="openFileButton" type="button">Open</button>
+        <input id="fileInput" type="file" accept=".md,text/markdown,text/plain" hidden>
+        <button id="saveFileButton" type="button">Save</button>
+        <button id="downloadButton" type="button">Download</button>
+        <button id="copyButton" type="button">Copy Markdown</button>
+      </div>
+    </header>
+
+    <main class="app-shell">
+      <section class="board-panel" aria-label="Kanban board">
+        <div class="board-toolbar">
+          <div>
+            <strong id="boardTitle">TODO Board</strong>
+            <span id="statusText" class="status-text">Ready</span>
+          </div>
+          <div class="board-actions">
+            <button id="loadSimpleButton" type="button">Simple Example</button>
+            <button id="loadRichButton" type="button">Rich Example</button>
+            <button id="addColumnButton" type="button">Add Column</button>
+            <button id="addCardButton" type="button">Add Card</button>
+          </div>
+        </div>
+        <div id="diagnostics" class="diagnostics" aria-live="polite"></div>
+        <div id="board" class="board" tabindex="0"></div>
+      </section>
+
+      <aside class="markdown-panel" aria-label="Markdown import and export">
+        <div class="panel-title">
+          <strong>Markdown</strong>
+          <button id="applyMarkdownButton" type="button">Apply Text</button>
+        </div>
+        <textarea id="markdownText" spellcheck="false"></textarea>
+      </aside>
+    </main>
+
+    <dialog id="cardDialog" class="card-dialog">
+      <form method="dialog" id="cardForm">
+        <div class="dialog-header">
+          <strong>Edit Card</strong>
+          <button value="cancel" type="submit" aria-label="Close">Close</button>
+        </div>
+        <label>
+          Title
+          <input id="editTitle" name="title" required>
+        </label>
+        <div class="field-grid">
+          <label>
+            Status
+            <select id="editStatus" name="status"></select>
+          </label>
+          <label>
+            Priority
+            <select id="editPriority" name="priority">
+              <option>High</option>
+              <option>Medium</option>
+              <option>Low</option>
+            </select>
+          </label>
+          <label>
+            Owner
+            <input id="editOwner" name="owner">
+          </label>
+          <label>
+            Conflict risk
+            <select id="editConflictRisk" name="conflictRisk">
+              <option>Low</option>
+              <option>Medium</option>
+              <option>High</option>
+            </select>
+          </label>
+        </div>
+        <label>
+          Body
+          <textarea id="editBody" name="body" spellcheck="false"></textarea>
+        </label>
+        <div class="dialog-actions">
+          <button id="deleteCardButton" class="danger" value="delete" type="button">Delete</button>
+          <span></span>
+          <button value="cancel" type="submit">Cancel</button>
+          <button id="saveCardButton" value="default" type="submit">Save</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script type="module" src="./src/app.js"></script>
+  </body>
+</html>
