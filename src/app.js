@@ -18,6 +18,7 @@ const els = {
   downloadButton: document.querySelector("#downloadButton"),
   copyButton: document.querySelector("#copyButton"),
   applyMarkdownButton: document.querySelector("#applyMarkdownButton"),
+  autoRefreshToggle: document.querySelector("#autoRefreshToggle"),
   loadSimpleButton: document.querySelector("#loadSimpleButton"),
   loadRichButton: document.querySelector("#loadRichButton"),
   addColumnButton: document.querySelector("#addColumnButton"),
@@ -34,11 +35,19 @@ const els = {
   deleteCardButton: document.querySelector("#deleteCardButton")
 };
 
+const AUTO_REFRESH_INTERVAL_MS = 2000;
+const DEFAULT_TODO_PATHS = ["./TODO.md", "./todo.md"];
+
 let state = {
   board: createEmptyBoard(),
   dirty: false,
   fileHandle: null,
   fileName: "TODO.md",
+  source: null,
+  autoRefresh: true,
+  refreshTimer: null,
+  refreshPending: false,
+  awaitingDefaultTodo: false,
   editing: null,
   dragged: null
 };
@@ -227,10 +236,9 @@ Verification:
 boot();
 
 async function boot() {
-  await loadExample("./examples/agent-designer-todo.md");
   bindEvents();
-  syncMarkdown();
-  render();
+  await loadDefaultMarkdown();
+  startAutoRefresh();
 }
 
 function bindEvents() {
@@ -239,7 +247,12 @@ function bindEvents() {
   els.saveFileButton.addEventListener("click", saveFile);
   els.downloadButton.addEventListener("click", downloadMarkdown);
   els.copyButton.addEventListener("click", copyMarkdown);
-  els.applyMarkdownButton.addEventListener("click", () => loadMarkdown(els.markdownText.value, "textarea"));
+  els.applyMarkdownButton.addEventListener("click", () => {
+    state.awaitingDefaultTodo = false;
+    loadMarkdown(els.markdownText.value, "textarea");
+  });
+  els.markdownText.addEventListener("input", markMarkdownDirty);
+  els.autoRefreshToggle.addEventListener("change", onAutoRefreshToggle);
   els.loadSimpleButton.addEventListener("click", () => loadExample("./examples/agent-designer-todo.md"));
   els.loadRichButton.addEventListener("click", () => loadExample("./examples/operations-rich.md"));
   els.addColumnButton.addEventListener("click", addColumn);
@@ -248,35 +261,151 @@ function bindEvents() {
   els.deleteCardButton.addEventListener("click", deleteEditingCard);
 }
 
-async function loadExample(path) {
+async function loadDefaultMarkdown() {
+  if (await loadFirstAvailableTodo()) return;
+  state.awaitingDefaultTodo = true;
+  await loadExample("./examples/agent-designer-todo.md", { keepDefaultTodoWatch: true });
+}
+
+async function loadFirstAvailableTodo() {
+  for (const path of DEFAULT_TODO_PATHS) {
+    const text = await fetchMarkdown(path);
+    if (text !== null) {
+      loadMarkdown(text, path.split("/").pop(), {
+        source: { kind: "url", path, lastText: text }
+      });
+      state.awaitingDefaultTodo = false;
+      return true;
+    }
+  }
+  return false;
+}
+
+async function loadExample(path, options = {}) {
   let text = fallbackExamples[path];
+  let source = null;
   try {
     const response = await fetch(path);
-    if (response.ok) text = await response.text();
+    if (response.ok) {
+      text = await response.text();
+      source = { kind: "url", path, lastText: text };
+    }
   } catch {
     // File URLs often block fetch; embedded examples keep the standalone page usable.
   }
-  loadMarkdown(text, path.split("/").pop());
-  state.fileHandle = null;
+  if (!options.keepDefaultTodoWatch) state.awaitingDefaultTodo = false;
+  loadMarkdown(text, path.split("/").pop(), { source });
 }
 
-function loadMarkdown(markdown, fileName) {
+function loadMarkdown(markdown, fileName, options = {}) {
   state.board = parseMarkdown(markdown);
   state.fileName = fileName || "TODO.md";
+  state.source = options.source || null;
+  state.fileHandle = state.source?.kind === "fileHandle" ? state.source.handle : null;
   state.dirty = false;
   syncMarkdown();
   render();
   setStatus(`Loaded ${state.fileName}`);
 }
 
+async function fetchMarkdown(path) {
+  try {
+    const separator = path.includes("?") ? "&" : "?";
+    const response = await fetch(`${path}${separator}refresh=${Date.now()}`, { cache: "no-store" });
+    if (!response.ok) return null;
+    return await response.text();
+  } catch {
+    return null;
+  }
+}
+
+function startAutoRefresh() {
+  if (state.refreshTimer) window.clearInterval(state.refreshTimer);
+  state.refreshTimer = window.setInterval(() => {
+    void checkForExternalRefresh();
+  }, AUTO_REFRESH_INTERVAL_MS);
+}
+
+function onAutoRefreshToggle(event) {
+  state.autoRefresh = event.currentTarget.checked;
+  setStatus(state.autoRefresh ? "Auto-refresh on" : "Auto-refresh paused");
+  if (state.autoRefresh) void checkForExternalRefresh();
+}
+
+async function checkForExternalRefresh() {
+  if (!state.autoRefresh || state.refreshPending) return;
+  if (state.dirty || state.dragged || state.editing || els.cardDialog.open) return;
+
+  state.refreshPending = true;
+  try {
+    if (state.awaitingDefaultTodo && await loadFirstAvailableTodo()) return;
+
+    const source = state.source;
+    if (!source) return;
+
+    if (source.kind === "url") {
+      const text = await fetchMarkdown(source.path);
+      if (text === null || text === source.lastText) return;
+      source.lastText = text;
+      applyExternalMarkdown(text, `Refreshed ${state.fileName}`);
+      return;
+    }
+
+    if (source.kind === "fileHandle") {
+      const file = await source.handle.getFile();
+      const text = await file.text();
+      source.lastModified = file.lastModified;
+      source.lastSize = file.size;
+      if (text === source.lastText) return;
+      source.lastText = text;
+      applyExternalMarkdown(text, `Refreshed ${state.fileName}`);
+    }
+  } catch {
+    setStatus("Auto-refresh unavailable");
+  } finally {
+    state.refreshPending = false;
+  }
+}
+
+function applyExternalMarkdown(markdown, message) {
+  state.board = parseMarkdown(markdown);
+  state.dirty = false;
+  syncMarkdown();
+  render();
+  setStatus(message);
+}
+
+async function rememberSourceText(text) {
+  const source = state.source;
+  if (!source) return;
+  source.lastText = text;
+  if (source.kind !== "fileHandle") return;
+  try {
+    const file = await source.handle.getFile();
+    source.lastModified = file.lastModified;
+    source.lastSize = file.size;
+  } catch {
+    // Saving succeeded; refresh metadata can be repaired on the next poll.
+  }
+}
+
 async function openFile() {
+  state.awaitingDefaultTodo = false;
   if ("showOpenFilePicker" in window) {
     const [handle] = await window.showOpenFilePicker({
       types: [{ description: "Markdown", accept: { "text/markdown": [".md"], "text/plain": [".txt"] } }]
     });
     const file = await handle.getFile();
-    state.fileHandle = handle;
-    loadMarkdown(await file.text(), file.name);
+    const text = await file.text();
+    loadMarkdown(text, file.name, {
+      source: {
+        kind: "fileHandle",
+        handle,
+        lastModified: file.lastModified,
+        lastSize: file.size,
+        lastText: text
+      }
+    });
     return;
   }
   els.fileInput.click();
@@ -285,7 +414,6 @@ async function openFile() {
 async function onFileInput(event) {
   const file = event.target.files?.[0];
   if (!file) return;
-  state.fileHandle = null;
   loadMarkdown(await file.text(), file.name);
   event.target.value = "";
 }
@@ -296,6 +424,7 @@ async function saveFile() {
     const writable = await state.fileHandle.createWritable();
     await writable.write(els.markdownText.value);
     await writable.close();
+    await rememberSourceText(els.markdownText.value);
     state.dirty = false;
     render();
     setStatus("Saved to file");
@@ -314,6 +443,7 @@ function downloadMarkdown() {
   anchor.click();
   URL.revokeObjectURL(url);
   state.dirty = false;
+  rememberSourceText(els.markdownText.value);
   render();
   setStatus("Downloaded markdown");
 }
@@ -564,6 +694,11 @@ function onCardKeydown(event) {
 function clearDropTarget() {
   document.querySelectorAll(".drop-target").forEach((item) => item.classList.remove("drop-target"));
   document.querySelectorAll(".drop-before").forEach((item) => item.classList.remove("drop-before"));
+}
+
+function markMarkdownDirty() {
+  state.dirty = true;
+  render();
 }
 
 function markDirty() {

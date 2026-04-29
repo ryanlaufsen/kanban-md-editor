@@ -13,6 +13,7 @@ A lightweight, zero-dependency Kanban editor for agent-readable `TODO.md` files.
   - `Conflict risk`
   - `Last updated`
 - Card body is normal Markdown until the next `### TODO-` card or `##` column.
+- Sections wrapped in HTML comments are ignored by the board.
 
 Dragging a card into another column updates the card's `Status` and `Last updated` fields.
 
@@ -25,6 +26,8 @@ npm run serve
 ```
 
 Then open `http://localhost:4173`.
+
+When served locally, the app opens `TODO.md`/`todo.md` from the project root if present and auto-refreshes it every two seconds when the file changes. Auto-refresh also works for files opened through the browser File System Access picker, and pauses while the board has unsaved local edits.
 
 ## Verify
 

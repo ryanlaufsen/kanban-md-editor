@@ -31,4 +31,45 @@ assert.equal(parseMarkdown(serializeMarkdown(richBoard)).columns[4].cards[0].id,
 const duplicate = parseMarkdown("## Ready\n\n### TODO-001 - A\n\n- Status: Ready\n\n### TODO-001 - B\n\n- Status: Ready\n");
 assert.equal(duplicate.diagnostics.some((item) => item.message.includes("Duplicate")), true);
 
+const commentedCard = parseMarkdown(`# TODO
+
+## Ready
+
+<!--
+### TODO-999 - Hidden Card
+
+- Status: Ready
+- Priority: High
+- Owner: Hidden
+- Conflict risk: High
+- Last updated: 2026-04-29
+-->
+
+### TODO-001 - Visible Card
+
+- Status: Ready
+`);
+assert.equal(commentedCard.columns[0].cards.length, 1);
+assert.equal(commentedCard.columns[0].cards[0].id, "TODO-001");
+
+const commentedColumn = parseMarkdown(`# TODO
+
+## Ready
+
+- None.
+
+<!--
+## Hidden
+
+### TODO-999 - Hidden Card
+
+- Status: Hidden
+-->
+
+## Done
+
+- None.
+`);
+assert.deepEqual(commentedColumn.columns.map((column) => column.name), ["Ready", "Done"]);
+
 console.log("parser tests passed");

@@ -30,7 +30,7 @@ export function createEmptyBoard() {
 }
 
 export function parseMarkdown(markdown) {
-  const text = String(markdown ?? "").replace(/\r\n/g, "\n");
+  const text = stripHtmlComments(String(markdown ?? "").replace(/\r\n/g, "\n"));
   const lines = text.split("\n");
   const board = { title: "TODO", preamble: "", columns: [], trailing: "", diagnostics: [] };
   const ids = new Set();
@@ -136,6 +136,35 @@ export function parseMarkdown(markdown) {
   }
 
   return board;
+}
+
+function stripHtmlComments(markdown) {
+  let result = "";
+  let cursor = 0;
+
+  while (cursor < markdown.length) {
+    const start = markdown.indexOf("<!--", cursor);
+    if (start === -1) {
+      result += markdown.slice(cursor);
+      break;
+    }
+
+    result += markdown.slice(cursor, start);
+    const end = markdown.indexOf("-->", start + 4);
+    if (end === -1) {
+      result += preserveLineBreaks(markdown.slice(start));
+      break;
+    }
+
+    result += preserveLineBreaks(markdown.slice(start, end + 3));
+    cursor = end + 3;
+  }
+
+  return result;
+}
+
+function preserveLineBreaks(text) {
+  return text.replace(/[^\n]/g, "");
 }
 
 function isBlank(line) {

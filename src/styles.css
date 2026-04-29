@@ -85,6 +85,24 @@ button:active {
   flex-wrap: wrap;
 }
 
+.auto-refresh-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.auto-refresh-toggle input {
+  width: 16px;
+  height: 16px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(320px, 35vw);
