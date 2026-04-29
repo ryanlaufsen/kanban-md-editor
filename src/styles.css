@@ -103,6 +103,12 @@ button:active {
   padding: 0;
 }
 
+.refresh-status {
+  color: var(--muted);
+  font-size: 13px;
+  min-height: 18px;
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(320px, 35vw);

@@ -19,6 +19,7 @@ const els = {
   copyButton: document.querySelector("#copyButton"),
   applyMarkdownButton: document.querySelector("#applyMarkdownButton"),
   autoRefreshToggle: document.querySelector("#autoRefreshToggle"),
+  refreshStatus: document.querySelector("#refreshStatus"),
   loadSimpleButton: document.querySelector("#loadSimpleButton"),
   loadRichButton: document.querySelector("#loadRichButton"),
   addColumnButton: document.querySelector("#addColumnButton"),
@@ -41,12 +42,17 @@ const DEFAULT_TODO_PATHS = ["./TODO.md", "./todo.md"];
 let state = {
   board: createEmptyBoard(),
   dirty: false,
+  boardDirty: false,
+  markdownDirty: false,
   fileHandle: null,
   fileName: "TODO.md",
   source: null,
   autoRefresh: true,
   refreshTimer: null,
   refreshPending: false,
+  refreshIssue: "",
+  localRevision: 0,
+  statusTimer: null,
   awaitingDefaultTodo: false,
   editing: null,
   dragged: null
@@ -248,8 +254,7 @@ function bindEvents() {
   els.downloadButton.addEventListener("click", downloadMarkdown);
   els.copyButton.addEventListener("click", copyMarkdown);
   els.applyMarkdownButton.addEventListener("click", () => {
-    state.awaitingDefaultTodo = false;
-    loadMarkdown(els.markdownText.value, "textarea");
+    applyMarkdownText();
   });
   els.markdownText.addEventListener("input", markMarkdownDirty);
   els.autoRefreshToggle.addEventListener("change", onAutoRefreshToggle);
@@ -258,6 +263,7 @@ function bindEvents() {
   els.addColumnButton.addEventListener("click", addColumn);
   els.addCardButton.addEventListener("click", addCardToFirstColumn);
   els.cardForm.addEventListener("submit", onCardFormSubmit);
+  els.cardDialog.addEventListener("close", onCardDialogClose);
   els.deleteCardButton.addEventListener("click", deleteEditingCard);
 }
 
@@ -302,10 +308,13 @@ function loadMarkdown(markdown, fileName, options = {}) {
   state.fileName = fileName || "TODO.md";
   state.source = options.source || null;
   state.fileHandle = state.source?.kind === "fileHandle" ? state.source.handle : null;
-  state.dirty = false;
+  markClean();
+  state.refreshIssue = "";
+  state.localRevision += 1;
   syncMarkdown();
   render();
   setStatus(`Loaded ${state.fileName}`);
+  queueRefreshCheck();
 }
 
 async function fetchMarkdown(path) {
@@ -328,24 +337,46 @@ function startAutoRefresh() {
 
 function onAutoRefreshToggle(event) {
   state.autoRefresh = event.currentTarget.checked;
+  state.refreshIssue = "";
+  render();
   setStatus(state.autoRefresh ? "Auto-refresh on" : "Auto-refresh paused");
-  if (state.autoRefresh) void checkForExternalRefresh();
+  if (state.autoRefresh) queueRefreshCheck();
 }
 
 async function checkForExternalRefresh() {
   if (!state.autoRefresh || state.refreshPending) return;
-  if (state.dirty || state.dragged || state.editing || els.cardDialog.open) return;
+  if (!hasWatchableSource()) {
+    renderRefreshStatus();
+    return;
+  }
+  if (hasRefreshBlocker()) {
+    renderRefreshStatus();
+    return;
+  }
 
   state.refreshPending = true;
+  const revision = state.localRevision;
   try {
     if (state.awaitingDefaultTodo && await loadFirstAvailableTodo()) return;
 
     const source = state.source;
-    if (!source) return;
+    if (!source) {
+      renderRefreshStatus();
+      return;
+    }
 
     if (source.kind === "url") {
       const text = await fetchMarkdown(source.path);
-      if (text === null || text === source.lastText) return;
+      if (text === null) {
+        state.refreshIssue = "Source unavailable";
+        renderRefreshStatus();
+        return;
+      }
+      if (text === source.lastText) return;
+      if (!canApplyRefresh(source, revision)) {
+        renderRefreshStatus();
+        return;
+      }
       source.lastText = text;
       applyExternalMarkdown(text, `Refreshed ${state.fileName}`);
       return;
@@ -354,25 +385,65 @@ async function checkForExternalRefresh() {
     if (source.kind === "fileHandle") {
       const file = await source.handle.getFile();
       const text = await file.text();
+      if (text === source.lastText) return;
+      if (!canApplyRefresh(source, revision)) {
+        renderRefreshStatus();
+        return;
+      }
       source.lastModified = file.lastModified;
       source.lastSize = file.size;
-      if (text === source.lastText) return;
       source.lastText = text;
       applyExternalMarkdown(text, `Refreshed ${state.fileName}`);
     }
-  } catch {
-    setStatus("Auto-refresh unavailable");
+  } catch (error) {
+    handleRefreshError(error);
   } finally {
     state.refreshPending = false;
+    renderRefreshStatus();
   }
 }
 
 function applyExternalMarkdown(markdown, message) {
   state.board = parseMarkdown(markdown);
-  state.dirty = false;
+  markClean();
+  state.refreshIssue = "";
+  state.localRevision += 1;
   syncMarkdown();
   render();
   setStatus(message);
+}
+
+function hasWatchableSource() {
+  if (location.protocol === "file:" && !state.source) return false;
+  return state.awaitingDefaultTodo || Boolean(state.source);
+}
+
+function hasRefreshBlocker() {
+  return state.dirty || state.dragged || state.editing || els.cardDialog.open;
+}
+
+function canApplyRefresh(source, revision) {
+  return state.source === source && state.localRevision === revision && !hasRefreshBlocker();
+}
+
+function queueRefreshCheck() {
+  window.setTimeout(() => {
+    void checkForExternalRefresh();
+  }, 0);
+}
+
+function handleRefreshError(error) {
+  if (error?.name === "NotAllowedError") {
+    state.autoRefresh = false;
+    state.refreshIssue = "Permission lost; reopen file";
+  } else if (error?.name === "NotFoundError") {
+    state.autoRefresh = false;
+    state.refreshIssue = "File moved or replaced; reopen file";
+  } else {
+    state.refreshIssue = "Auto-refresh unavailable";
+  }
+  render();
+  setStatus(state.refreshIssue);
 }
 
 async function rememberSourceText(text) {
@@ -415,54 +486,109 @@ async function onFileInput(event) {
   const file = event.target.files?.[0];
   if (!file) return;
   loadMarkdown(await file.text(), file.name);
+  state.refreshIssue = "Snapshot only; reopen to refresh";
+  render();
   event.target.value = "";
 }
 
 async function saveFile() {
-  syncMarkdown();
+  const markdown = getCurrentMarkdownForSave();
   if (state.fileHandle && "createWritable" in state.fileHandle) {
     const writable = await state.fileHandle.createWritable();
-    await writable.write(els.markdownText.value);
+    await writable.write(markdown);
     await writable.close();
-    await rememberSourceText(els.markdownText.value);
-    state.dirty = false;
+    await rememberSourceText(markdown);
+    markClean();
+    state.localRevision += 1;
     render();
     setStatus("Saved to file");
+    queueRefreshCheck();
     return;
   }
   downloadMarkdown();
 }
 
 function downloadMarkdown() {
-  syncMarkdown();
-  const blob = new Blob([els.markdownText.value], { type: "text/markdown;charset=utf-8" });
+  const markdown = getCurrentMarkdownForSave();
+  const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
   anchor.download = state.fileName || "TODO.md";
   anchor.click();
   URL.revokeObjectURL(url);
-  state.dirty = false;
-  rememberSourceText(els.markdownText.value);
+  markClean();
+  state.localRevision += 1;
   render();
   setStatus("Downloaded markdown");
+  queueRefreshCheck();
 }
 
 async function copyMarkdown() {
-  syncMarkdown();
-  await navigator.clipboard.writeText(els.markdownText.value);
+  await navigator.clipboard.writeText(getCurrentMarkdownForCopy());
   setStatus("Copied markdown");
+}
+
+function applyMarkdownText() {
+  state.board = parseMarkdown(els.markdownText.value);
+  if (!state.source) state.awaitingDefaultTodo = false;
+  state.refreshIssue = state.source ? "" : "No live source";
+  state.boardDirty = true;
+  state.markdownDirty = false;
+  state.dirty = true;
+  state.localRevision += 1;
+  render();
+  setStatus(state.source ? "Applied text; save to update file" : "Applied text; no live source");
+}
+
+function getCurrentMarkdownForSave() {
+  if (state.markdownDirty) {
+    const markdown = els.markdownText.value;
+    state.board = parseMarkdown(markdown);
+    state.boardDirty = true;
+    state.markdownDirty = false;
+    return markdown;
+  }
+  syncMarkdown();
+  return els.markdownText.value;
+}
+
+function getCurrentMarkdownForCopy() {
+  if (!state.markdownDirty) syncMarkdown();
+  return els.markdownText.value;
 }
 
 function syncMarkdown() {
   els.markdownText.value = serializeMarkdown(state.board);
+  state.markdownDirty = false;
 }
 
 function render() {
   els.boardTitle.textContent = state.board.title || "TODO Board";
   els.statusText.textContent = state.dirty ? "Unsaved changes" : "Ready";
+  renderRefreshStatus();
   renderDiagnostics();
   renderBoard();
+}
+
+function renderRefreshStatus() {
+  els.autoRefreshToggle.checked = state.autoRefresh;
+  els.autoRefreshToggle.disabled = !hasWatchableSource();
+  els.refreshStatus.textContent = getRefreshStatus();
+}
+
+function getRefreshStatus() {
+  if (state.refreshIssue) return state.refreshIssue;
+  if (!hasWatchableSource()) {
+    return location.protocol === "file:" ? "No live source; use local server" : "No live source";
+  }
+  if (!state.autoRefresh) return "Auto-refresh off";
+  if (state.dirty) return "Paused: local edits";
+  if (state.dragged) return "Paused: dragging";
+  if (state.editing || els.cardDialog.open) return "Paused: editing card";
+  if (state.refreshPending) return "Checking for changes";
+  if (state.source) return `Watching ${state.fileName}`;
+  return "Waiting for TODO.md";
 }
 
 function renderDiagnostics() {
@@ -609,6 +735,13 @@ function onCardFormSubmit(event) {
   markDirty();
 }
 
+function onCardDialogClose() {
+  const hadEditingState = Boolean(state.editing);
+  state.editing = null;
+  render();
+  if (hadEditingState) queueRefreshCheck();
+}
+
 function deleteEditingCard() {
   if (!state.editing) return;
   const { columnIndex, cardIndex } = state.editing;
@@ -633,6 +766,8 @@ function onDragEnd(event) {
   event.currentTarget.classList.remove("dragging");
   clearDropTarget();
   state.dragged = null;
+  renderRefreshStatus();
+  queueRefreshCheck();
 }
 
 function onDragOver(event) {
@@ -697,20 +832,34 @@ function clearDropTarget() {
 }
 
 function markMarkdownDirty() {
+  state.markdownDirty = true;
+  state.boardDirty = false;
   state.dirty = true;
+  state.localRevision += 1;
   render();
 }
 
 function markDirty() {
+  state.boardDirty = true;
+  state.markdownDirty = false;
   state.dirty = true;
+  state.localRevision += 1;
   syncMarkdown();
   render();
 }
 
+function markClean() {
+  state.dirty = false;
+  state.boardDirty = false;
+  state.markdownDirty = false;
+}
+
 function setStatus(message) {
   els.statusText.textContent = message;
-  window.setTimeout(() => {
+  if (state.statusTimer) window.clearTimeout(state.statusTimer);
+  state.statusTimer = window.setTimeout(() => {
     els.statusText.textContent = state.dirty ? "Unsaved changes" : "Ready";
+    state.statusTimer = null;
   }, 1200);
 }
 

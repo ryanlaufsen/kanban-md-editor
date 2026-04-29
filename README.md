@@ -27,7 +27,11 @@ npm run serve
 
 Then open `http://localhost:4173`.
 
-When served locally, the app opens `TODO.md`/`todo.md` from the project root if present and auto-refreshes it every two seconds when the file changes. Auto-refresh also works for files opened through the browser File System Access picker, and pauses while the board has unsaved local edits.
+When served locally, the app opens `TODO.md`/`todo.md` from the project root if present and checks it for changes every two seconds. Clean boards update automatically in both the Kanban view and Markdown pane when agents write the file.
+
+Auto-refresh pauses instead of overwriting local edits while a card dialog is open, a drag is active, or the board/Markdown pane has unsaved changes. The toolbar shows the current refresh state, including `Watching`, `Paused`, `Snapshot only`, and permission or missing-file errors.
+
+Files opened through the browser File System Access picker can also refresh while permission remains valid. The fallback file input and direct `file://` usage are snapshot-only; use `npm run serve` for root `TODO.md` polling.
 
 ## Verify
 
