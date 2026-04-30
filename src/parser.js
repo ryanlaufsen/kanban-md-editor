@@ -1,4 +1,6 @@
-const TODO_HEADING = /^###\s+(TODO-\d{3,})\s+-\s+(.+?)\s*$/;
+const CARD_ID_PATTERN = "[A-Za-z]{1,4}-\\d+";
+const CARD_ID = /^([A-Za-z]{1,4})-(\d+)$/;
+const CARD_HEADING = new RegExp(`^###\\s+(${CARD_ID_PATTERN})\\s+-\\s+(.+?)\\s*$`);
 const COLUMN_HEADING = /^##\s+(.+?)\s*$/;
 const METADATA_ORDER = ["Status", "Priority", "Owner", "Conflict risk", "Last updated"];
 const DEFAULT_METADATA = {
@@ -56,7 +58,7 @@ export function parseMarkdown(markdown) {
     cursor += 1;
 
     while (cursor < lines.length && !COLUMN_HEADING.test(lines[cursor])) {
-      const cardMatch = TODO_HEADING.exec(lines[cursor]);
+      const cardMatch = CARD_HEADING.exec(lines[cursor]);
       if (!cardMatch) {
         column.intro += lines[cursor] + "\n";
         cursor += 1;
@@ -80,11 +82,11 @@ export function parseMarkdown(markdown) {
       };
       cursor += 1;
 
-      while (cursor < lines.length && isBlank(lines[cursor]) && !COLUMN_HEADING.test(lines[cursor]) && !TODO_HEADING.test(lines[cursor])) {
+      while (cursor < lines.length && isBlank(lines[cursor]) && !COLUMN_HEADING.test(lines[cursor]) && !CARD_HEADING.test(lines[cursor])) {
         cursor += 1;
       }
 
-      while (cursor < lines.length && !COLUMN_HEADING.test(lines[cursor]) && !TODO_HEADING.test(lines[cursor])) {
+      while (cursor < lines.length && !COLUMN_HEADING.test(lines[cursor]) && !CARD_HEADING.test(lines[cursor])) {
         const metadataMatch = /^-\s+([^:]+):\s*(.*)\s*$/.exec(lines[cursor]);
         if (!metadataMatch) break;
 
@@ -102,11 +104,11 @@ export function parseMarkdown(markdown) {
         cursor += 1;
       }
 
-      while (cursor < lines.length && isBlank(lines[cursor]) && !COLUMN_HEADING.test(lines[cursor]) && !TODO_HEADING.test(lines[cursor])) {
+      while (cursor < lines.length && isBlank(lines[cursor]) && !COLUMN_HEADING.test(lines[cursor]) && !CARD_HEADING.test(lines[cursor])) {
         cursor += 1;
       }
 
-      while (cursor < lines.length && !COLUMN_HEADING.test(lines[cursor]) && !TODO_HEADING.test(lines[cursor])) {
+      while (cursor < lines.length && !COLUMN_HEADING.test(lines[cursor]) && !CARD_HEADING.test(lines[cursor])) {
         card.body += lines[cursor] + "\n";
         cursor += 1;
       }
@@ -224,14 +226,40 @@ export function normalizeMetadata(metadata, status) {
 }
 
 export function getNextTodoId(board) {
-  let max = 0;
+  const series = new Map();
+  let order = 0;
+
   for (const column of board.columns) {
     for (const card of column.cards) {
-      const match = /^TODO-(\d+)$/.exec(card.id);
-      if (match) max = Math.max(max, Number(match[1]));
+      const match = CARD_ID.exec(card.id);
+      if (!match) continue;
+
+      const [, prefix, digits] = match;
+      const value = BigInt(digits);
+      if (!series.has(prefix)) {
+        series.set(prefix, { count: 0, max: value, width: digits.length, order });
+        order += 1;
+      }
+
+      const item = series.get(prefix);
+      item.count += 1;
+      if (value > item.max || (value === item.max && digits.length > item.width)) {
+        item.max = value;
+        item.width = digits.length;
+      }
     }
   }
-  return `TODO-${String(max + 1).padStart(3, "0")}`;
+
+  let selectedPrefix = "TODO";
+  let selected = { count: 0, max: 0n, width: 3, order: Number.MAX_SAFE_INTEGER };
+  for (const [prefix, item] of series) {
+    if (item.count > selected.count || (item.count === selected.count && item.order < selected.order)) {
+      selectedPrefix = prefix;
+      selected = item;
+    }
+  }
+
+  return `${selectedPrefix}-${String(selected.max + 1n).padStart(selected.width, "0")}`;
 }
 
 export function createCard(board, columnName) {

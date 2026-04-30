@@ -6,13 +6,14 @@ A lightweight, zero-dependency Kanban editor for agent-readable `TODO.md` files.
 
 - Columns are level-two headings: `## Ready`.
 - Cards are level-three headings: `### TODO-001 - Short Title`.
+- Card IDs must be one to four letters, a dash, and one or more digits, such as `TODO-001`, `AAAA-000`, `AAA-0000`, or `AA-000000000`.
 - Card metadata uses these exact keys:
   - `Status`
   - `Priority`
   - `Owner`
   - `Conflict risk`
   - `Last updated`
-- Card body is normal Markdown until the next `### TODO-` card or `##` column.
+- Card body is normal Markdown until the next valid card heading or `##` column.
 - Sections wrapped in HTML comments are ignored by the board.
 
 Dragging a card into another column updates the card's `Status` and `Last updated` fields.
